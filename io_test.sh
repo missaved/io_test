@@ -66,18 +66,46 @@ function fio_test() {
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
   sleep 2
 
-  # 使用最终汇总信息行解析
-  # 提取READ行中括号内的MB/s数值
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -Eo '\([0-9\.]+MB/s\)' | sed -E 's/\(([0-9\.]+)MB\/s\)/\1/')
-  # 提取WRITE行中括号内的MB/s数值
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -Eo '\([0-9\.]+MB/s\)' | sed -E 's/\(([0-9\.]+)MB\/s\)/\1/')
+  # 从最终总结行中提取数据
+  RW_LINE=$(grep "^ *READ:" "$TEST_DIR/fio_output.log")
+  WW_LINE=$(grep "^ *WRITE:" "$TEST_DIR/fio_output.log")
 
-  RW_SPEED=${RW_SPEED:-0}
-  WW_SPEED=${WW_SPEED:-0}
+  # 从括号中提取速率值 (例如 "(302kB/s)")
+  RW_UNIT=$(echo "$RW_LINE" | grep -oP '\([0-9\.]+(KiB|kB|MiB|MB)\/s\)' | tr -d '()')
+  WW_UNIT=$(echo "$WW_LINE" | grep -oP '\([0-9\.]+(KiB|kB|MiB|MB)\/s\)' | tr -d '()')
+
+  # 定义转换函数
+  function convert_to_mb() {
+    local val_unit="$1"
+    # 提取数值和单位
+    local val=$(echo "$val_unit" | sed 's/[A-Za-z\/]//g')  # 去掉单位后只剩数值
+    local unit=$(echo "$val_unit" | sed 's/[0-9\.]//g')    # 只保留单位部分 (如 kB/s或MB/s)
+
+    # 统一为MB/s
+    # kB/s或KiB/s：除以1024
+    # MB/s或MiB/s：直接使用值
+    if [[ "$unit" == "MB/s" || "$unit" == "MiB/s" ]]; then
+      echo "$val"
+    else
+      # kB/s 或 KiB/s
+      echo "scale=4; $val/1024" | bc
+    fi
+  }
+
+  # 如果未匹配到就设为0
+  RW_SPEED="0"
+  WW_SPEED="0"
+  if [ -n "$RW_UNIT" ]; then
+    RW_SPEED=$(convert_to_mb "$RW_UNIT")
+  fi
+  if [ -n "$WW_UNIT" ]; then
+    WW_SPEED=$(convert_to_mb "$WW_UNIT")
+  fi
 
   echo "fio 读取速度: $RW_SPEED MB/s"
   echo "fio 写入速度: $WW_SPEED MB/s"
 }
+
 
 # 运行 dd 和 fio 测试两次并取平均值
 declare -a dd_write_results dd_read_results fio_write_results fio_read_results
