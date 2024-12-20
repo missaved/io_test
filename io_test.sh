@@ -27,11 +27,13 @@ function dd_test() {
   echo "执行 dd 写入测试..."
   WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\.]* MB/s' | awk '{print $1}')
   WRITE_SPEED=${WRITE_SPEED:-0} # 防止空值
+  sleep 1
   echo "写入速度: $WRITE_SPEED MB/s"
 
   echo "执行 dd 读取测试..."
   READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\.]* MB/s' | awk '{print $1}')
   READ_SPEED=${READ_SPEED:-0} # 防止空值
+  sleep 1
   echo "读取速度: $READ_SPEED MB/s"
 }
 
@@ -39,7 +41,7 @@ function dd_test() {
 function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
-
+  sleep 2
   # 提取读取和写入带宽范围，并计算平均值
   RW_RANGE=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o '(.*MB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
   WW_RANGE=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o '(.*MB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
