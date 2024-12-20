@@ -37,12 +37,17 @@ function dd_test() {
 function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
-  
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk -F',' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=\\([0-9.]*\\).*/\\1/')
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk -F',' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=\\([0-9.]*\\).*/\\1/')
-  
-  echo "fio 读取速度: $RW_SPEED KiB/s"
-  echo "fio 写入速度: $WW_SPEED KiB/s"
+
+  # 提取读取和写入带宽
+  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk -F' ' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=//g' | sed 's/MiB\/s//g')
+  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk -F' ' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=//g' | sed 's/MiB\/s//g')
+
+  # 确保解析到的值是有效数字
+  RW_SPEED=${RW_SPEED:-0}
+  WW_SPEED=${WW_SPEED:-0}
+
+  echo "fio 读取速度: $RW_SPEED MiB/s"
+  echo "fio 写入速度: $WW_SPEED MiB/s"
 }
 
 # 运行 dd 和 fio 测试两次并取平均值
@@ -65,7 +70,9 @@ function calculate_average() {
   local sum=0
   local count=$#
   for value in "$@"; do
-    sum=$(echo "$sum + $value" | bc)
+    if [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      sum=$(echo "$sum + $value" | bc)
+    fi
   done
   echo "scale=2; $sum / $count" | bc
 }
@@ -79,8 +86,8 @@ fio_read_avg=$(calculate_average "${fio_read_results[@]}")
 echo "\\n测试结果汇总:"
 echo "DD 写入速度平均值: $dd_write_avg MB/s"
 echo "DD 读取速度平均值: $dd_read_avg MB/s"
-echo "FIO 写入速度平均值: $fio_write_avg KiB/s"
-echo "FIO 读取速度平均值: $fio_read_avg KiB/s"
+echo "FIO 写入速度平均值: $fio_write_avg MiB/s"
+echo "FIO 读取速度平均值: $fio_read_avg MiB/s"
 
 # 清理测试文件
 rm -rf "$TEST_DIR"
