@@ -25,12 +25,12 @@ fi
 # 定义函数进行 dd 测试
 function dd_test() {
   echo "执行 dd 写入测试..."
-  WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s' | awk '{print $1}')
+  WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\.]* MB/s' | awk '{print $1}')
   WRITE_SPEED=${WRITE_SPEED:-0} # 防止空值
   echo "写入速度: $WRITE_SPEED MB/s"
 
   echo "执行 dd 读取测试..."
-  READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s' | awk '{print $1}')
+  READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\.]* MB/s' | awk '{print $1}')
   READ_SPEED=${READ_SPEED:-0} # 防止空值
   echo "读取速度: $READ_SPEED MB/s"
 }
@@ -41,21 +41,21 @@ function fio_test() {
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
 
   # 提取读取和写入带宽范围，并计算平均值
-  RW_RANGE=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o '(.*MiB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
-  WW_RANGE=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o '(.*MiB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
+  RW_RANGE=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o '(.*MB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
+  WW_RANGE=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o '(.*MB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
 
   RW_SPEED=${RW_RANGE:-0} # 防止空值
   WW_SPEED=${WW_RANGE:-0} # 防止空值
 
-  echo "fio 读取速度: $RW_SPEED MiB/s"
-  echo "fio 写入速度: $WW_SPEED MiB/s"
+  echo "fio 读取速度: $RW_SPEED MB/s"
+  echo "fio 写入速度: $WW_SPEED MB/s"
 }
 
 # 运行 dd 和 fio 测试两次并取平均值
 declare -a dd_write_results dd_read_results fio_write_results fio_read_results
 
 for i in {1..2}; do
-  echo "\\n开始第 $i 次测试..."
+  echo "\n开始第 $i 次测试..."
   dd_test
   fio_test
 
@@ -84,11 +84,11 @@ fio_write_avg=$(calculate_average "${fio_write_results[@]}")
 fio_read_avg=$(calculate_average "${fio_read_results[@]}")
 
 # 输出平均值
-echo "\\n测试结果汇总:"
+echo "\n测试结果汇总:"
 echo "DD 写入速度平均值: $dd_write_avg MB/s"
 echo "DD 读取速度平均值: $dd_read_avg MB/s"
-echo "FIO 写入速度平均值: $fio_write_avg MiB/s"
-echo "FIO 读取速度平均值: $fio_read_avg MiB/s"
+echo "FIO 写入速度平均值: $fio_write_avg MB/s"
+echo "FIO 读取速度平均值: $fio_read_avg MB/s"
 
 # 清理测试文件
 rm -rf "$TEST_DIR"
