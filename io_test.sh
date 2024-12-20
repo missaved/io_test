@@ -26,10 +26,12 @@ fi
 function dd_test() {
   echo "执行 dd 写入测试..."
   WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s' | awk '{print $1}')
+  WRITE_SPEED=${WRITE_SPEED:-0} # 防止空值
   echo "写入速度: $WRITE_SPEED MB/s"
 
   echo "执行 dd 读取测试..."
   READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s' | awk '{print $1}')
+  READ_SPEED=${READ_SPEED:-0} # 防止空值
   echo "读取速度: $READ_SPEED MB/s"
 }
 
@@ -39,12 +41,11 @@ function fio_test() {
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
 
   # 提取读取和写入带宽
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk -F' ' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=//g' | sed 's/MiB\/s//g')
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk -F' ' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=//g' | sed 's/MiB\/s//g')
+  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk -F',' '{print $2}' | awk '{print $2}' | sed 's/MiB\/s//g')
+  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk -F',' '{print $2}' | awk '{print $2}' | sed 's/MiB\/s//g')
 
-  # 确保解析到的值是有效数字
-  RW_SPEED=${RW_SPEED:-0}
-  WW_SPEED=${WW_SPEED:-0}
+  RW_SPEED=${RW_SPEED:-0} # 防止空值
+  WW_SPEED=${WW_SPEED:-0} # 防止空值
 
   echo "fio 读取速度: $RW_SPEED MiB/s"
   echo "fio 写入速度: $WW_SPEED MiB/s"
