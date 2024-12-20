@@ -2,4 +2,4 @@
 io_test
 get speed for debain
 
-wget -N https://github.com/missaved/io_test/raw/refs/heads/main/io_test.sh && chmod +x io_test.sh && bash io_test.sh/
+wget -N https://github.com/missaved/io_test/raw/refs/heads/main/io_test.sh && chmod +x io_test.sh && bash io_test.sh
