@@ -26,20 +26,39 @@ fi
 function dd_test() {
   echo "执行 dd 写入测试..."
   WRITE_OUTPUT=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1)
-  WRITE_SPEED=$(echo "$WRITE_OUTPUT" | grep -o '[0-9\.]* MB/s' | awk '{print $1}')
-  WRITE_SPEED=${WRITE_SPEED:-0} # 防止空值
+  # 从最后一行提取速度
+  WRITE_LINE=$(echo "$WRITE_OUTPUT" | grep 'copied')
+  WRITE_VALUE=$(echo "$WRITE_LINE" | awk -F, '{print $3}' | awk '{print $1}')    # 数值部分
+  WRITE_UNIT=$(echo "$WRITE_LINE" | awk -F, '{print $3}' | awk '{print $2}')     # 单位部分，比如MB/s或GB/s
+
+  if [ "$WRITE_UNIT" = "GB/s" ]; then
+    WRITE_SPEED=$(echo "$WRITE_VALUE * 1024" | bc)
+  else
+    WRITE_SPEED=$WRITE_VALUE
+  fi
+
   echo "$WRITE_OUTPUT" > "$TEST_DIR/dd_write_output.log"
   sleep 1
   echo "写入速度: $WRITE_SPEED MB/s"
 
   echo "执行 dd 读取测试..."
   READ_OUTPUT=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1)
-  READ_SPEED=$(echo "$READ_OUTPUT" | grep -o '[0-9\.]* MB/s' | awk '{print $1}')
-  READ_SPEED=${READ_SPEED:-0} # 防止空值
+  # 同样解析读取速度
+  READ_LINE=$(echo "$READ_OUTPUT" | grep 'copied')
+  READ_VALUE=$(echo "$READ_LINE" | awk -F, '{print $3}' | awk '{print $1}')
+  READ_UNIT=$(echo "$READ_LINE" | awk -F, '{print $3}' | awk '{print $2}')
+
+  if [ "$READ_UNIT" = "GB/s" ]; then
+    READ_SPEED=$(echo "$READ_VALUE * 1024" | bc)
+  else
+    READ_SPEED=$READ_VALUE
+  fi
+
   echo "$READ_OUTPUT" > "$TEST_DIR/dd_read_output.log"
   sleep 1
   echo "读取速度: $READ_SPEED MB/s"
 }
+
 
 # 定义函数进行 fio 测试
 function fio_test() {
