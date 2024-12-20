@@ -46,9 +46,9 @@ function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
   sleep 2
-  # 提取读取和写入带宽范围，并计算平均值
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o 'bw=[0-9\.]*MB/s' | sed 's/bw=//g' | sed 's/MB\/s//g')
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o 'bw=[0-9\.]*MB/s' | sed 's/bw=//g' | sed 's/MB\/s//g')
+  # 提取读取和写入带宽（最终结果部分）
+  RW_SPEED=$(grep -Eo 'READ:.*BW=[0-9\.]+[KMG]iB/s' "$TEST_DIR/fio_output.log" | awk -F'BW=' '{print $2}' | sed 's/KiB\/s//' | awk '{printf "%.2f", $1 / 1024}')
+  WW_SPEED=$(grep -Eo 'WRITE:.*BW=[0-9\.]+[KMG]iB/s' "$TEST_DIR/fio_output.log" | awk -F'BW=' '{print $2}' | sed 's/KiB\/s//' | awk '{printf "%.2f", $1 / 1024}')
 
   RW_SPEED=${RW_SPEED:-0} # 防止空值
   WW_SPEED=${WW_SPEED:-0} # 防止空值
@@ -102,5 +102,5 @@ echo "FIO 写入速度平均值: $fio_write_avg MB/s"
 echo "FIO 读取速度平均值: $fio_read_avg MB/s"
 
 # 清理测试文件
-rm -rf "$TEST_DIR"
+#rm -rf "$TEST_DIR"
 echo "测试文件已清理，测试完成。"
