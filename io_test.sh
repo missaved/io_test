@@ -43,11 +43,11 @@ function fio_test() {
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
   sleep 2
   # 提取读取和写入带宽范围，并计算平均值
-  RW_RANGE=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o '(.*MB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
-  WW_RANGE=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o '(.*MB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
+  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o 'bw=[0-9\.]*MB/s' | sed 's/bw=//g' | sed 's/MB\/s//g')
+  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o 'bw=[0-9\.]*MB/s' | sed 's/bw=//g' | sed 's/MB\/s//g')
 
-  RW_SPEED=${RW_RANGE:-0} # 防止空值
-  WW_SPEED=${WW_RANGE:-0} # 防止空值
+  RW_SPEED=${RW_SPEED:-0} # 防止空值
+  WW_SPEED=${WW_SPEED:-0} # 防止空值
 
   echo "fio 读取速度: $RW_SPEED MB/s"
   echo "fio 写入速度: $WW_SPEED MB/s"
@@ -83,7 +83,7 @@ function calculate_average() {
 dd_write_avg=$(calculate_average "${dd_write_results[@]}")
 dd_read_avg=$(calculate_average "${dd_read_results[@]}")
 fio_write_avg=$(calculate_average "${fio_write_results[@]}")
-fio_read_avg=$(calculate_average "${fio_read_results[@]}")
+fio_read_avg=$(calculate_average "${fio_read_results[@]}" )
 
 # 输出平均值
 echo "\n测试结果汇总:"
