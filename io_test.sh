@@ -25,20 +25,22 @@ fi
 # 定义函数进行 dd 测试
 function dd_test() {
   echo "执行 dd 写入测试..."
-  WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s')
-  echo "写入速度: $WRITE_SPEED"
+  WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s' | awk '{print $1}')
+  echo "写入速度: $WRITE_SPEED MB/s"
 
   echo "执行 dd 读取测试..."
-  READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s')
-  echo "读取速度: $READ_SPEED"
+  READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s' | awk '{print $1}')
+  echo "读取速度: $READ_SPEED MB/s"
 }
 
 # 定义函数进行 fio 测试
 function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk '{print $3}' | sed 's/KiB\\/s//')
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk '{print $3}' | sed 's/KiB\\/s//')
+  
+  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk -F',' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=\\([0-9.]*\\).*/\\1/')
+  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk -F',' '{for(i=1;i<=NF;i++) if($i ~ /bw=/) {print $i} }' | sed 's/bw=\\([0-9.]*\\).*/\\1/')
+  
   echo "fio 读取速度: $RW_SPEED KiB/s"
   echo "fio 写入速度: $WW_SPEED KiB/s"
 }
@@ -52,8 +54,8 @@ for i in {1..2}; do
   fio_test
 
   # 保存结果
-  dd_write_results+=("${WRITE_SPEED// MB/s/}")
-  dd_read_results+=("${READ_SPEED// MB/s/}")
+  dd_write_results+=("$WRITE_SPEED")
+  dd_read_results+=("$READ_SPEED")
   fio_write_results+=("$WW_SPEED")
   fio_read_results+=("$RW_SPEED")
 done
