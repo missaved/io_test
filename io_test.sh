@@ -102,5 +102,5 @@ echo "FIO 写入速度平均值: $fio_write_avg MB/s"
 echo "FIO 读取速度平均值: $fio_read_avg MB/s"
 
 # 清理测试文件
-#rm -rf "$TEST_DIR"
+rm -rf "$TEST_DIR"
 echo "测试文件已清理，测试完成。"
