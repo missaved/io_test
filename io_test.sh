@@ -46,12 +46,15 @@ function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
   sleep 2
-  # 提取读取和写入带宽（最终结果部分）
-  RW_SPEED=$(grep -Eo 'READ:.*BW=[0-9\.]+[KMG]iB/s' "$TEST_DIR/fio_output.log" | awk -F'BW=' '{print $2}' | sed 's/KiB\/s//' | awk '{printf "%.2f", $1 / 1024}')
-  WW_SPEED=$(grep -Eo 'WRITE:.*BW=[0-9\.]+[KMG]iB/s' "$TEST_DIR/fio_output.log" | awk -F'BW=' '{print $2}' | sed 's/KiB\/s//' | awk '{printf "%.2f", $1 / 1024}')
 
-  RW_SPEED=${RW_SPEED:-0} # 防止空值
-  WW_SPEED=${WW_SPEED:-0} # 防止空值
+  # 使用最终汇总信息行解析
+  # 提取READ行中括号内的MB/s数值
+  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -Eo '\([0-9\.]+MB/s\)' | sed -E 's/\(([0-9\.]+)MB\/s\)/\1/')
+  # 提取WRITE行中括号内的MB/s数值
+  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -Eo '\([0-9\.]+MB/s\)' | sed -E 's/\(([0-9\.]+)MB\/s\)/\1/')
+
+  RW_SPEED=${RW_SPEED:-0}
+  WW_SPEED=${WW_SPEED:-0}
 
   echo "fio 读取速度: $RW_SPEED MB/s"
   echo "fio 写入速度: $WW_SPEED MB/s"
