@@ -11,20 +11,25 @@ TEST_DIR="/tmp/io_test"
 mkdir -p "$TEST_DIR"
 TEST_FILE="$TEST_DIR/testfile"
 
-# 安装 fio（如果未安装）
+# 安装必要工具
 if ! command -v fio &> /dev/null; then
   echo "fio 未安装，正在安装..."
   apt update && apt install -y fio || { echo "安装 fio 失败！请检查网络连接。"; exit 1; }
 fi
 
+if ! command -v bc &> /dev/null; then
+  echo "bc 未安装，正在安装..."
+  apt update && apt install -y bc || { echo "安装 bc 失败！请检查网络连接。"; exit 1; }
+fi
+
 # 定义函数进行 dd 测试
 function dd_test() {
   echo "执行 dd 写入测试..."
-  WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\.]* MB/s')
+  WRITE_SPEED=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s')
   echo "写入速度: $WRITE_SPEED"
 
   echo "执行 dd 读取测试..."
-  READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\.]* MB/s')
+  READ_SPEED=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1 | grep -o '[0-9\\.]* MB/s')
   echo "读取速度: $READ_SPEED"
 }
 
@@ -32,23 +37,23 @@ function dd_test() {
 function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk '{print $2 $3}' | head -n 1)
-  echo "fio 读取速度: $RW_SPEED"
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk '{print $2 $3}' | head -n 1)
-  echo "fio 写入速度: $WW_SPEED"
+  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk '{print $3}' | sed 's/KiB\\/s//')
+  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk '{print $3}' | sed 's/KiB\\/s//')
+  echo "fio 读取速度: $RW_SPEED KiB/s"
+  echo "fio 写入速度: $WW_SPEED KiB/s"
 }
 
 # 运行 dd 和 fio 测试两次并取平均值
 declare -a dd_write_results dd_read_results fio_write_results fio_read_results
 
 for i in {1..2}; do
-  echo "\n开始第 $i 次测试..."
+  echo "\\n开始第 $i 次测试..."
   dd_test
   fio_test
 
   # 保存结果
-  dd_write_results+=("$WRITE_SPEED")
-  dd_read_results+=("$READ_SPEED")
+  dd_write_results+=("${WRITE_SPEED// MB/s/}")
+  dd_read_results+=("${READ_SPEED// MB/s/}")
   fio_write_results+=("$WW_SPEED")
   fio_read_results+=("$RW_SPEED")
 done
@@ -69,11 +74,11 @@ fio_write_avg=$(calculate_average "${fio_write_results[@]}")
 fio_read_avg=$(calculate_average "${fio_read_results[@]}")
 
 # 输出平均值
-echo "\n测试结果汇总:"
+echo "\\n测试结果汇总:"
 echo "DD 写入速度平均值: $dd_write_avg MB/s"
 echo "DD 读取速度平均值: $dd_read_avg MB/s"
-echo "FIO 写入速度平均值: $fio_write_avg MB/s"
-echo "FIO 读取速度平均值: $fio_read_avg MB/s"
+echo "FIO 写入速度平均值: $fio_write_avg KiB/s"
+echo "FIO 读取速度平均值: $fio_read_avg KiB/s"
 
 # 清理测试文件
 rm -rf "$TEST_DIR"
