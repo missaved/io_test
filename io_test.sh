@@ -65,8 +65,8 @@ function dd_test() {
   echo "执行 dd 写入测试..."
   WRITE_OUTPUT=$(dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1)
   WRITE_LINE=$(echo "$WRITE_OUTPUT" | grep 'copied')
-  # 第3段为速率信息，如 "96.9 MB/s"
-  WRITE_SPEED_STR=$(echo "$WRITE_LINE" | awk -F, '{print $3}' | xargs)
+  # 使用grep正则匹配速率
+  WRITE_SPEED_STR=$(echo "$WRITE_LINE" | grep -oE '[0-9\.]+ [GMk]?B/s')
   WRITE_SPEED=$(parse_speed_to_mb "$WRITE_SPEED_STR")
   echo "$WRITE_OUTPUT" > "$TEST_DIR/dd_write_output.log"
   sleep 1
@@ -75,12 +75,13 @@ function dd_test() {
   echo "执行 dd 读取测试..."
   READ_OUTPUT=$(dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1)
   READ_LINE=$(echo "$READ_OUTPUT" | grep 'copied')
-  READ_SPEED_STR=$(echo "$READ_LINE" | awk -F, '{print $3}' | xargs)
+  READ_SPEED_STR=$(echo "$READ_LINE" | grep -oE '[0-9\.]+ [GMk]?B/s')
   READ_SPEED=$(parse_speed_to_mb "$READ_SPEED_STR")
   echo "$READ_OUTPUT" > "$TEST_DIR/dd_read_output.log"
   sleep 1
   echo "读取速度: $READ_SPEED MB/s"
 }
+
 
 # 定义函数进行 fio 测试
 function fio_test() {
