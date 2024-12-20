@@ -40,12 +40,12 @@ function fio_test() {
   echo "执行 fio 测试..."
   fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
 
-  # 提取读取和写入带宽
-  RW_SPEED=$(grep 'READ:' "$TEST_DIR/fio_output.log" | awk -F',' '{print $2}' | awk '{print $2}' | sed 's/MiB\/s//g')
-  WW_SPEED=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | awk -F',' '{print $2}' | awk '{print $2}' | sed 's/MiB\/s//g')
+  # 提取读取和写入带宽范围，并计算平均值
+  RW_RANGE=$(grep 'READ:' "$TEST_DIR/fio_output.log" | grep -o '(.*MiB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
+  WW_RANGE=$(grep 'WRITE:' "$TEST_DIR/fio_output.log" | grep -o '(.*MiB/s)' | sed 's/[()]//g' | awk -F'-' '{print ($1+$2)/2}')
 
-  RW_SPEED=${RW_SPEED:-0} # 防止空值
-  WW_SPEED=${WW_SPEED:-0} # 防止空值
+  RW_SPEED=${RW_RANGE:-0} # 防止空值
+  WW_SPEED=${WW_RANGE:-0} # 防止空值
 
   echo "fio 读取速度: $RW_SPEED MiB/s"
   echo "fio 写入速度: $WW_SPEED MiB/s"
