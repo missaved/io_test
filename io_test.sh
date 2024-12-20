@@ -1,5 +1,9 @@
 #!/bin/bash
 
+export LC_ALL=C
+export LANG=C
+export LANGUAGE=C
+
 # 确保脚本以 root 权限运行
 if [ "$EUID" -ne 0 ]; then
   echo "请以 root 权限运行此脚本！"
