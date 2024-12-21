@@ -6,3 +6,8 @@ wget -N https://raw.githubusercontent.com/missaved/io_test/refs/heads/main/io_te
 ...
 https://tinyurl.com/4ha3ephy
 ...
+```
+function test() {
+  console.log("notice the blank line before this function?");
+}
+```
