@@ -1,157 +1,243 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# 自动检测当前系统的所有物理磁盘挂载点，获取硬盘型号和文件系统类型，
+# 使用 fio 分别测试：顺序写、顺序读、随机写、随机读 的带宽(MB/s)，
+# 最终输出一张汇总表格。
 
-export LC_ALL=C
-export LANG=C
-export LANGUAGE=C
-
-# 确保脚本以 root 权限运行
-if [ "$EUID" -ne 0 ]; then
-  echo "请以 root 权限运行此脚本！"
+################################################################################
+# 1) 准备工作：检查是否 root、安装 fio + jq
+################################################################################
+if [[ $EUID -ne 0 ]]; then
+  echo "请使用 root 权限执行此脚本 (sudo 或者直接在 root 下)。"
   exit 1
 fi
 
-# 设置测试目录和文件
-TEST_DIR="/tmp/io_test"
-mkdir -p "$TEST_DIR"
-TEST_FILE="$TEST_DIR/testfile"
-
-# 安装必要工具
-if ! command -v fio &> /dev/null; then
-  echo "fio 未安装，正在安装..."
-  apt update && apt install -y fio || { echo "安装 fio 失败！请检查网络连接。"; exit 1; }
+if ! command -v fio &>/dev/null; then
+  echo "未检测到 fio，正在自动安装..."
+  apt-get update && apt-get install -y fio
+  if ! command -v fio &>/dev/null; then
+    echo "安装 fio 失败，请手动安装后重试。"
+    exit 1
+  fi
 fi
 
-if ! command -v bc &> /dev/null; then
-  echo "bc 未安装，正在安装..."
-  apt update && apt install -y bc || { echo "安装 bc 失败！请检查网络连接。"; exit 1; }
+if ! command -v jq &>/dev/null; then
+  echo "未检测到 jq，正在自动安装..."
+  apt-get update && apt-get install -y jq
+  if ! command -v jq &>/dev/null; then
+    echo "安装 jq 失败，请手动安装后重试。"
+    exit 1
+  fi
 fi
 
-# 通用函数：将任意速率字符串（如"96.9 MB/s", "2.1 GB/s", "302kB/s", "31.6MiB/s"等）
-# 转换成 MB/s 数值（浮点）。未匹配则返回0。
-function parse_speed_to_mb() {
-  local input="$1"
-  input=$(echo "$input" | xargs) # 去除前后空格
+################################################################################
+# 2) 筛选当前系统的真实挂载点
+#    - 排除 tmpfs / devtmpfs / overlay / squashfs 等虚拟文件系统
+#    - 取出: 设备名 / 文件系统类型 / 挂载点
+################################################################################
+EXCLUDE_FS_REGEX="^(tmpfs|devtmpfs|overlay|squashfs|proc|sysfs|cgroup|pstore|aufs|ramfs)$"
 
-  # 提取数值和单位
-  local value=$(echo "$input" | grep -Eo '[0-9]+(\.[0-9]+)?')
-  local unit=$(echo "$input" | grep -Eo '[KMG]?[i]?B/s')
+# 用 df -T 列出所有挂载的文件系统, 跳过表头
+# 格式：Filesystem Type Size Used Avail Use% Mounted on
+ALL_MOUNTS=()
+while read -r line; do
+  # 示例行：/dev/sda1 ext4  50G  10G  37G  22%  /
+  # 用 awk 拆分
+  dev=$(echo "$line" | awk '{print $1}')       # 设备名
+  fstype=$(echo "$line" | awk '{print $2}')    # 文件系统类型
+  mountp=$(echo "$line" | awk '{print $7}')    # 挂载点
 
-  if [ -z "$value" ] || [ -z "$unit" ]; then
-    echo "0"
-    return
+  # 排除不需要的类型
+  if echo "$fstype" | grep -Eq "$EXCLUDE_FS_REGEX"; then
+    continue
   fi
 
-  local speed_mb
-  case "$unit" in
-    "MB/s"|"MiB/s")
-      # 直接使用数值
-      speed_mb="$value"
-      ;;
-    "kB/s"|"KiB/s")
-      # 除以1024
-      speed_mb=$(echo "scale=4; $value/1024" | bc)
-      ;;
-    "GB/s"|"GiB/s")
-      # 乘以1024
-      speed_mb=$(echo "scale=4; $value*1024" | bc)
-      ;;
-    *)
-      # 未知单位，返回0
-      speed_mb="0"
-      ;;
-  esac
+  # 排除类似 /dev/loopX 这种只读镜像（snap等），你可自行选择是否排除
+  if [[ "$dev" =~ ^/dev/loop[0-9]+$ ]]; then
+    continue
+  fi
 
-  echo "$speed_mb"
+  # 收集
+  ALL_MOUNTS+=("$dev|$fstype|$mountp")
+done < <(df -T | tail -n +2)
+
+# 如果没有找到任何挂载点，就退出
+if [[ ${#ALL_MOUNTS[@]} -eq 0 ]]; then
+  echo "未找到可测试的物理磁盘挂载点(全部是虚拟文件系统或被排除)。"
+  exit 0
+fi
+
+################################################################################
+# 3) 准备数组来存放测试结果
+################################################################################
+declare -A MODEL        # [mount_point] -> 磁盘型号
+declare -A FS_TYPE      # [mount_point] -> 文件系统类型
+declare -A SEQW         # [mount_point] -> 顺序写 MB/s
+declare -A SEQR         # [mount_point] -> 顺序读 MB/s
+declare -A RANDW        # [mount_point] -> 随机写 MB/s
+declare -A RANDR        # [mount_point] -> 随机读 MB/s
+
+################################################################################
+# 4) 定义一个函数：对单个挂载点执行 fio 测试
+#    - 4个job：seq_write, seq_read, rand_write, rand_read
+#    - 大小默认: size=1G (可自行修改)
+#    - 解析JSON输出并将结果存入关联数组
+################################################################################
+function run_fio_test_for_mount() {
+  local mountp="$1"
+
+  # 为了安全，做一个临时 config 文件
+  local fio_conf
+  fio_conf=$(mktemp /tmp/fio_conf.XXXXXX)
+  cat <<EOF > "$fio_conf"
+[global]
+ioengine=libaio
+direct=1
+bs=4k
+iodepth=4
+size=1G
+directory=$mountp
+# 如需限制时间，可设置 time_based=1, runtime=30 等
+
+[seq_write]
+rw=write
+filename=fio_seq_write.bin
+stonewall
+unlink=1
+
+[seq_read]
+rw=read
+filename=fio_seq_read.bin
+stonewall
+unlink=1
+
+[rand_write]
+rw=randwrite
+filename=fio_rand_write.bin
+stonewall
+unlink=1
+
+[rand_read]
+rw=randread
+filename=fio_rand_read.bin
+stonewall
+unlink=1
+EOF
+
+  # 执行 fio 测试，输出 JSON
+  local fio_output
+  fio_output=$(fio --output-format=json "$fio_conf" 2>/dev/null)
+
+  # 删除临时文件
+  rm -f "$fio_conf"
+
+  # 解析 JSON，提取4个job的带宽(bw: KB/s) -> 转成 MB/s
+  # seq_write => write
+  local bw_seqw_kb
+  bw_seqw_kb=$(echo "$fio_output" | jq '.jobs[] | select(.jobname=="seq_write").write.bw')
+  local bw_seqw_mb
+  bw_seqw_mb=$(awk -v kb="$bw_seqw_kb" 'BEGIN { printf "%.1f", kb/1024 }')
+
+  # seq_read => read
+  local bw_seqr_kb
+  bw_seqr_kb=$(echo "$fio_output" | jq '.jobs[] | select(.jobname=="seq_read").read.bw')
+  local bw_seqr_mb
+  bw_seqr_mb=$(awk -v kb="$bw_seqr_kb" 'BEGIN { printf "%.1f", kb/1024 }')
+
+  # rand_write => write
+  local bw_randw_kb
+  bw_randw_kb=$(echo "$fio_output" | jq '.jobs[] | select(.jobname=="rand_write").write.bw')
+  local bw_randw_mb
+  bw_randw_mb=$(awk -v kb="$bw_randw_kb" 'BEGIN { printf "%.1f", kb/1024 }')
+
+  # rand_read => read
+  local bw_randr_kb
+  bw_randr_kb=$(echo "$fio_output" | jq '.jobs[] | select(.jobname=="rand_read").read.bw')
+  local bw_randr_mb
+  bw_randr_mb=$(awk -v kb="$bw_randr_kb" 'BEGIN { printf "%.1f", kb/1024 }')
+
+  # 存入全局数组
+  SEQW["$mountp"]="$bw_seqw_mb"
+  SEQR["$mountp"]="$bw_seqr_mb"
+  RANDW["$mountp"]="$bw_randw_mb"
+  RANDR["$mountp"]="$bw_randr_mb"
 }
 
-# 定义函数进行 dd 测试
-function dd_test() {
-  echo "执行 dd 写入测试..."
+################################################################################
+# 5) 主循环：对每个挂载点：
+#    - 获取其父块设备 + 磁盘型号
+#    - 运行 fio 测试
+################################################################################
+for item in "${ALL_MOUNTS[@]}"; do
+  # 拆分 dev|fstype|mount
+  dev="${item%%|*}"              # /dev/sda1
+  rest="${item#*|}"              # fstype|mount
+  fstype="${rest%%|*}"
+  mountp="${rest#*|}"
 
-  # 强制 dd 使用英文输出
-  WRITE_OUTPUT=$(LANG=C dd if=/dev/zero of="$TEST_FILE" bs=1M count=1024 oflag=direct 2>&1)
-  # 提取速度值：英文环境下最后会有类似 "..., X s, Y MB/s"
-  WRITE_LINE=$(echo "$WRITE_OUTPUT" | grep 'copied')
-  # 使用英文格式的逗号，直接用awk取最后字段
-  WRITE_SPEED_STR=$(echo "$WRITE_LINE" | awk -F, '{print $NF}' | xargs) # 这应该会给出"585 MB/s"
-  WRITE_SPEED=$(parse_speed_to_mb "$WRITE_SPEED_STR")
-  echo "$WRITE_OUTPUT" > "$TEST_DIR/dd_write_output.log"
-  sleep 1
-  echo "写入速度: $WRITE_SPEED MB/s"
+  # 取父块设备(物理磁盘)：lsblk -no PKNAME /dev/sda1 => sda
+  # 如果 dev 本身就是整块设备 /dev/sda，则 PKNAME 可能为空
+  parent_blk=$(lsblk -no PKNAME "$dev" 2>/dev/null)
+  if [[ -z "$parent_blk" ]]; then
+    # 可能本身就是 /dev/sda 这种整块磁盘
+    parent_blk=$(basename "$dev")
+  fi
 
-  echo "执行 dd 读取测试..."
-  READ_OUTPUT=$(LANG=C dd if="$TEST_FILE" of=/dev/null bs=1M count=1024 iflag=direct 2>&1)
-  READ_LINE=$(echo "$READ_OUTPUT" | grep 'copied')
-  READ_SPEED_STR=$(echo "$READ_LINE" | awk -F, '{print $NF}' | xargs)
-  READ_SPEED=$(parse_speed_to_mb "$READ_SPEED_STR")
-  echo "$READ_OUTPUT" > "$TEST_DIR/dd_read_output.log"
-  sleep 1
-  echo "读取速度: $READ_SPEED MB/s"
-}
+  # 磁盘型号: lsblk -no MODEL /dev/sda
+  disk_model=$(lsblk -no MODEL "/dev/$parent_blk" 2>/dev/null)
+  [[ -z "$disk_model" ]] && disk_model="(Unknown)"
 
-# 定义函数进行 fio 测试
-function fio_test() {
-  echo "执行 fio 测试..."
-  fio --name=io_test --size=1G --filename="$TEST_FILE" --rw=randrw --bs=4k --direct=1 --numjobs=4 --time_based --runtime=30 --output="$TEST_DIR/fio_output.log"
-  sleep 2
+  # 存起来
+  MODEL["$mountp"]="$disk_model"
+  FS_TYPE["$mountp"]="$fstype"
 
-  RW_LINE=$(grep "^ *READ:" "$TEST_DIR/fio_output.log")
-  WW_LINE=$(grep "^ *WRITE:" "$TEST_DIR/fio_output.log")
-
-  # 提取如 "(302kB/s)" 的模式
-  RW_UNIT=$(echo "$RW_LINE" | grep -oP '\([0-9\.]+[kMGT]?[i]?B/s\)' | tr -d '()')
-  WW_UNIT=$(echo "$WW_LINE" | grep -oP '\([0-9\.]+[kMGT]?[i]?B/s\)' | tr -d '()')
-
-  RW_SPEED=$(parse_speed_to_mb "$RW_UNIT")
-  WW_SPEED=$(parse_speed_to_mb "$WW_UNIT")
-
-  echo "fio 读取速度: $RW_SPEED MB/s"
-  echo "fio 写入速度: $WW_SPEED MB/s"
-}
-
-# 运行 dd 和 fio 测试两次并取平均值
-declare -a dd_write_results dd_read_results fio_write_results fio_read_results
-
-for i in {1..2}; do
-  echo "\n开始第 $i 次测试..."
-  dd_test
-  fio_test
-
-  dd_write_results+=("$WRITE_SPEED")
-  dd_read_results+=("$READ_SPEED")
-  fio_write_results+=("$WW_SPEED")
-  fio_read_results+=("$RW_SPEED")
+  echo "------------------------------------------------"
+  echo "挂载点: $mountp"
+  echo "设备: $dev (物理磁盘: /dev/$parent_blk)"
+  echo "文件系统: $fstype"
+  echo "磁盘型号: $disk_model"
+  echo "开始执行 fio 测试(顺序读写 & 随机读写)..."
+  run_fio_test_for_mount "$mountp"
+  echo "完成。"
 done
 
-# 输出每次的详细结果
-echo "\nDD 写入测试输出:" && cat "$TEST_DIR/dd_write_output.log"
-echo "\nDD 读取测试输出:" && cat "$TEST_DIR/dd_read_output.log"
-echo "\nFIO 测试输出:" && cat "$TEST_DIR/fio_output.log"
+################################################################################
+# 6) 打印结果汇总表
+################################################################################
+echo
+echo "===================== 测试结果汇总表 ====================="
+printf "| %-20s | %-18s | %-7s | %-7s | %-7s | %-7s |\n" \
+  "挂载点" "磁盘型号" "SeqW" "SeqR" "RandW" "RandR"
+echo "|----------------------|--------------------|---------|---------|---------|---------|"
 
-# 计算平均值函数
-function calculate_average() {
-  local sum=0
-  local count=$#
-  for value in "$@"; do
-    if [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-      sum=$(echo "$sum + $value" | bc)
-    fi
-  done
-  echo "scale=2; $sum / $count" | bc
-}
+for item in "${ALL_MOUNTS[@]}"; do
+  rest="${item#*|}"
+  fstype="${rest%%|*}"
+  mountp="${rest#*|}"
+  
+  local_model="${MODEL[$mountp]}"
+  local_seqw="${SEQW[$mountp]}"
+  local_seqr="${SEQR[$mountp]}"
+  local_randw="${RANDW[$mountp]}"
+  local_randr="${RANDR[$mountp]}"
 
-dd_write_avg=$(calculate_average "${dd_write_results[@]}")
-dd_read_avg=$(calculate_average "${dd_read_results[@]}")
-fio_write_avg=$(calculate_average "${fio_write_results[@]}")
-fio_read_avg=$(calculate_average "${fio_read_results[@]}")
+  # 若某次测试失败(取不到值)，设为 "N/A"
+  [[ -z "$local_seqw" ]] && local_seqw="N/A"
+  [[ -z "$local_seqr" ]] && local_seqr="N/A"
+  [[ -z "$local_randw" ]] && local_randw="N/A"
+  [[ -z "$local_randr" ]] && local_randr="N/A"
 
-# 输出平均值
-echo "\n测试结果汇总:"
-echo "DD 写入速度平均值: $dd_write_avg MB/s"
-echo "DD 读取速度平均值: $dd_read_avg MB/s"
-echo "FIO 写入速度平均值: $fio_write_avg MB/s"
-echo "FIO 读取速度平均值: $fio_read_avg MB/s"
+  printf "| %-20s | %-18s | %-7s | %-7s | %-7s | %-7s |\n" \
+    "$mountp" \
+    "$local_model" \
+    "$local_seqw" \
+    "$local_seqr" \
+    "$local_randw" \
+    "$local_randr"
+done
 
-# 清理测试文件
-rm -rf "$TEST_DIR"
-echo "测试文件已清理，测试完成。"
+echo "==========================================================="
+echo
+echo "说明：以上带宽单位均为 MB/s (测试时使用 bs=4k, iodepth=4, size=1G)。"
+echo "      SeqW/SeqR = 顺序写/读，RandW/RandR = 随机写/读。"
+echo "      可在脚本中自行修改 fio 配置参数以适配实际需求。"
